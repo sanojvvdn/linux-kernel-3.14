@@ -1,0 +1,6 @@
+0001-mmc-sdhci-esdhc-imx-Fixup-runtime-PM-conditions-duri.patch
+0002-ARM-LLVMLinux-Change-extern-inline-to-static-inline.patch
+0003-ARM-8158-LLVMLinux-use-static-inline-in-ARM-ftrace.patch
+0004-tixu_pmic_dts.patch
+0005-tixu_pmic_wi-fi.patch
+0006-tixu_pmic_bt.patch
