@@ -36,9 +36,6 @@ static struct clk *pll2_pfd2_396m_clk;
 static struct clk *pll1_bypass;
 static struct clk *pll1_bypass_src;
 static struct clk *pll1;
-static struct clk *secondary_sel;
-static struct clk *pll2_bus;
-static struct clk *osc;
 
 static struct device *cpu_dev;
 static struct cpufreq_frequency_table *freq_table;
@@ -53,6 +50,7 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 	unsigned long freq_hz, volt, volt_old;
 	unsigned int old_freq, new_freq;
 	int ret;
+	int tol = 25000; /* 25mv tollerance */
 
 	mutex_lock(&set_cpufreq_lock);
 
@@ -73,9 +71,9 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 	rcu_read_unlock();
 	volt_old = regulator_get_voltage(arm_reg);
 
-	dev_dbg(cpu_dev, "%u MHz, %ld mV --> %u MHz, %ld mV\n",
+	dev_dbg(cpu_dev, "%u MHz, %ld mV --> %u MHz, %ld/%d mV\n",
 		old_freq / 1000, volt_old / 1000,
-		new_freq / 1000, volt / 1000);
+		new_freq / 1000, volt / 1000, imx6_soc_volt[index] / 1000);
 	/*
 	 * CPU freq is increasing, so need to ensure
 	 * that bus frequency is increased too.
@@ -87,7 +85,7 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 	if (new_freq > old_freq) {
 		if (!IS_ERR(pu_reg) && regulator_is_enabled(pu_reg)) {
 			ret = regulator_set_voltage_tol(pu_reg,
-				imx6_soc_volt[index], 0);
+				imx6_soc_volt[index], tol);
 			if (ret) {
 				dev_err(cpu_dev,
 					"failed to scale vddpu up: %d\n", ret);
@@ -95,13 +93,13 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 				return ret;
 			}
 		}
-		ret = regulator_set_voltage_tol(soc_reg, imx6_soc_volt[index], 0);
+		ret = regulator_set_voltage_tol(soc_reg, imx6_soc_volt[index], tol);
 		if (ret) {
 			dev_err(cpu_dev, "failed to scale vddsoc up: %d\n", ret);
 			mutex_unlock(&set_cpufreq_lock);
 			return ret;
 		}
-		ret = regulator_set_voltage_tol(arm_reg, volt, 0);
+		ret = regulator_set_voltage_tol(arm_reg, volt, tol);
 		if (ret) {
 			dev_err(cpu_dev,
 				"failed to scale vddarm up: %d\n", ret);
@@ -112,74 +110,54 @@ static int imx6q_set_target(struct cpufreq_policy *policy, unsigned int index)
 
 	/*
 	 * The setpoints are selected per PLL/PDF frequencies, so we need to
-	 * reprogram PLL for frequency scaling. The procedure of reprogramming
+	 * reprogram PLL for frequency scaling.  The procedure of reprogramming
 	 * PLL1 is as below.
-	 * For i.MX6UL, it has a secondary clk mux, the cpu frequency change
-	 * flow is slightly different from other I.MX6 SOC.
 	 *
-	 * The cpu frequency change flow for i.MX6(except i.MX6UL) is as below:
 	 *  - Enable pll2_pfd2_396m_clk and reparent pll1_sw_clk to it
 	 *  - Reprogram pll1_sys_clk and reparent pll1_sw_clk back to it
 	 *  - Disable pll2_pfd2_396m_clk
 	 */
-	if (!IS_ERR(secondary_sel)) {
-
-		/* When changing pll1_sw source to pll1_sys, cpu may run at higher
-		 * than 528MHz, this will lead to the system unstable if the voltage
-		 * is lower than the voltage of 528MHz. So lower the cpu frequency to
-		 * one half before changing cpu frequency.
-		 */
-		clk_set_rate(arm_clk, (old_freq >> 1) * 1000);
+	clk_set_parent(step_clk, pll2_pfd2_396m_clk);
+	clk_set_parent(pll1_sw_clk, step_clk);
+	if (freq_hz > clk_get_rate(pll2_pfd2_396m_clk)) {
+		clk_set_rate(pll1_sys_clk, new_freq * 1000);
+		 /*
+		  * Ensure pll1_bypass is set back to pll1.
+		  */
 		clk_set_parent(pll1_sw_clk, pll1_sys_clk);
-		clk_set_parent(step_clk, osc);
-		if (freq_hz > clk_get_rate(pll2_pfd2_396m_clk))
-			clk_set_parent(secondary_sel, pll2_bus);
-		else
-			ret = clk_set_parent(secondary_sel, pll2_pfd2_396m_clk);
-		clk_set_parent(step_clk, secondary_sel);
-		clk_set_parent(pll1_sw_clk, step_clk);
-	} else {
-		clk_set_parent(step_clk, pll2_pfd2_396m_clk);
-		clk_set_parent(pll1_sw_clk, step_clk);
-		if (freq_hz > clk_get_rate(pll2_pfd2_396m_clk)) {
-			clk_set_rate(pll1, new_freq * 1000);
-
-			/* Ensure pll1_bypass is set back to pll1. */
-			clk_set_parent(pll1_bypass, pll1);
-			clk_set_parent(pll1_sw_clk, pll1_sys_clk);
-		} else
-			/*
-			 * Need to ensure that PLL1 is bypassed and enabled
-			 * before ARM-PODF is set.
-			 */
-			clk_set_parent(pll1_bypass, pll1_bypass_src);
+	} else{
+		/*
+		  * Need to ensure that PLL1 is bypassed and enabled
+		  * before ARM-PODF is set.
+		  */
+		clk_set_parent(pll1_bypass, pll1_bypass_src);
 	}
 
 	/* Ensure the arm clock divider is what we expect */
 	ret = clk_set_rate(arm_clk, new_freq * 1000);
 	if (ret) {
 		dev_err(cpu_dev, "failed to set clock rate: %d\n", ret);
-		regulator_set_voltage_tol(arm_reg, volt_old, 0);
+		regulator_set_voltage_tol(arm_reg, volt_old, tol);
 		mutex_unlock(&set_cpufreq_lock);
 		return ret;
 	}
 
 	/* scaling down?  scale voltage after frequency */
 	if (new_freq < old_freq) {
-		ret = regulator_set_voltage_tol(arm_reg, volt, 0);
+		ret = regulator_set_voltage_tol(arm_reg, volt, tol);
 		if (ret) {
 			dev_warn(cpu_dev,
 				 "failed to scale vddarm down: %d\n", ret);
 			ret = 0;
 		}
-		ret = regulator_set_voltage_tol(soc_reg, imx6_soc_volt[index], 0);
+		ret = regulator_set_voltage_tol(soc_reg, imx6_soc_volt[index], tol);
 		if (ret) {
 			dev_warn(cpu_dev, "failed to scale vddsoc down: %d\n", ret);
 			ret = 0;
 		}
 		if (!IS_ERR(pu_reg) && regulator_is_enabled(pu_reg)) {
 			ret = regulator_set_voltage_tol(pu_reg,
-				imx6_soc_volt[index], 0);
+				imx6_soc_volt[index], tol);
 			if (ret) {
 				dev_warn(cpu_dev,
 					"failed to scale vddpu down: %d\n",
@@ -301,11 +279,6 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 		goto put_node;
 	}
 
-	/* below clks are just for i.MX6UL */
-	pll2_bus = devm_clk_get(cpu_dev, "pll2_bus");
-	secondary_sel = devm_clk_get(cpu_dev, "secondary_sel");
-	osc = devm_clk_get(cpu_dev, "osc");
-
 	arm_reg = devm_regulator_get_optional(cpu_dev, "arm");
 	pu_reg = devm_regulator_get_optional(cpu_dev, "pu");
 	soc_reg = devm_regulator_get_optional(cpu_dev, "soc");
@@ -314,9 +287,9 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 		ret = -ENOENT;
 		goto put_node;
 	}
-	rcu_read_lock();
+
 	num = dev_pm_opp_get_opp_count(cpu_dev);
-	rcu_read_unlock();
+
 	/*
 	 * soc_reg sync  with arm_reg if arm shares the same regulator
 	 * with soc. Otherwise, regulator common framework will refuse to update
@@ -324,12 +297,12 @@ static int imx6q_cpufreq_probe(struct platform_device *pdev)
 	 * still keep in old one. For example, imx6sx-sdb with pfuze200 in
 	 * ldo-bypass mode.
 	 */
-
 	of_property_read_u32(np, "fsl,arm-soc-shared", &i);
 	if (i == 1)
 		soc_reg = arm_reg;
 
 	WARN_ON(num < 0);
+
 	ret = dev_pm_opp_init_cpufreq_table(cpu_dev, &freq_table);
 	if (ret) {
 		dev_err(cpu_dev, "failed to init cpufreq table: %d\n", ret);

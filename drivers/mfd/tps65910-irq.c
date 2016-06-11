@@ -24,7 +24,7 @@
 #include <linux/mfd/tps65910.h>
 
 static inline int irq_to_tps65910_irq(struct tps65910 *tps65910,
-		int irq)
+							int irq)
 {
 	return (irq - tps65910->irq_base);
 }
@@ -128,7 +128,7 @@ static struct irq_chip tps65910_irq_chip = {
 };
 
 int tps65910_irq_init(struct tps65910 *tps65910, int irq,
-		struct tps65910_platform_data *pdata)
+		    struct tps65910_platform_data *pdata)
 {
 	int ret, cur_irq;
 	int flags = IRQF_ONESHOT;
@@ -156,11 +156,11 @@ int tps65910_irq_init(struct tps65910 *tps65910, int irq,
 
 	/* Register with genirq */
 	for (cur_irq = tps65910->irq_base;
-			cur_irq < TPS65910_NUM_IRQ + tps65910->irq_base;
-			cur_irq++) {
+	     cur_irq < TPS65910_NUM_IRQ + tps65910->irq_base;
+	     cur_irq++) {
 		irq_set_chip_data(cur_irq, tps65910);
 		irq_set_chip_and_handler(cur_irq, &tps65910_irq_chip,
-				handle_edge_irq);
+					 handle_edge_irq);
 		irq_set_nested_thread(cur_irq, 1);
 
 		/* ARM needs us to explicitly flag the IRQ as valid
@@ -173,7 +173,7 @@ int tps65910_irq_init(struct tps65910 *tps65910, int irq,
 	}
 
 	ret = request_threaded_irq(irq, NULL, tps65910_irq, flags,
-			"tps65910", tps65910);
+				   "tps65910", tps65910);
 	if (ret != 0)
 		dev_err(tps65910->dev, "Failed to request IRQ: %d\n", ret);
 

@@ -231,14 +231,13 @@
 		interrupt-parent = <&intc>;
 		interrupts = <3 21 IRQ_TYPE_LEVEL_LOW>;
 		ti,en-ck32k-xtal;
-                #interrupt-cells = <2>;
-                interrupt-controller;
-
-                ti,system-power-controller;
+        #interrupt-cells = <2>;
+        interrupt-controller;
+        ti,system-power-controller;
 
 		vcc1-supply = <&vbat>;                          // VDD1 input
-	        vcc2-supply = <&vbat>;                          // VDD2 input
-	        vcc3-supply = <&vbat>;                          // VAUX33 and VMMC input
+        vcc2-supply = <&vbat>;                          // VDD2 input
+        vcc3-supply = <&vbat>;                          // VAUX33 and VMMC input
 		vcc4-supply = <&vbat>;                          // VAUX1 and VAUX2 input
 		vcc5-supply = <&vbat>;                          // VPLL and VDAC input
 		vcc6-supply = <&vbat>;                          // VDIG1 and VDIG2 input
